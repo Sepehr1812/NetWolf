@@ -1,4 +1,3 @@
-import concurrent.futures as con
 import os
 import re
 import socket
@@ -14,6 +13,7 @@ class Node:
         self.udp_port = udp_port
         self.cluster = []
         self.cluster_id = []
+        self.folder = ""
         self.mutex = False
 
     def init_cluster(self, file_name):
@@ -21,6 +21,7 @@ class Node:
             n = [re.split("\\s+", line.rstrip('\n')) for line in f]
 
             self.node_id, self.ip, self.udp_port = n[0][0], n[0][1], int(n[0][2])
+            self.folder = "../" + n[0][0]
             for i in range(1, len(n)):
                 self.cluster.append(Node(n[i][0], n[i][1], int(n[i][2])))
                 self.cluster_id.append(n[i][0])
@@ -52,6 +53,7 @@ def init_node():
     else:
         _node.node_id, _node.ip = input("Enter name & IP: ").split()
         _node.udp_port = int(input("Enter UDP port: "))
+        _node.folder = input("Enter folder: ")
         while True:
             data = input("Enter node name, IP and UDP port. Enter '0' to finish: ").split()
             if data[0] == '0':
@@ -83,17 +85,16 @@ def udp_server():
     while True:
         # print("Getting Cluster")
         rec_data, addr = uss.recvfrom(4096)
-        print(addr)
-        node.merge(str(rec_data, encoding="UTF-8"))
-
-
-def search_for_file(file_name):
-    for c in node.cluster:
-        ucs.sendto(bytes(file_name, encoding="UTF-8"), (c.ip, c.udp_port))
-
-    while True:
-        # print("Getting Cluster")
-        rec_data, addr = uss.recvfrom(4096)
+        rec_str = str(rec_data, encoding="UTF-8")
+        if rec_str == "FOUND":  # file exists
+            print("Found")
+        elif rec_str.startswith("GET"):  # request for file file
+            data = rec_str.split()
+            for root, dirs, files in os.walk(node.folder):
+                if data[1] in files:  # file exists
+                    ucs.sendto(bytes("FOUND", encoding="UTF-8"), (addr[0], int(data[2])))
+        else:  # discovering
+            node.merge(rec_str)
 
 
 if __name__ == '__main__':
@@ -124,8 +125,10 @@ if __name__ == '__main__':
             else:
                 for cn in node.cluster:
                     print(cn.node_id + " " + cn.ip)
-        # elif il.startswith("get"):
-
+        elif il.startswith("get"):
+            for cn in node.cluster:
+                ucs.sendto(bytes("GET " + il.split()[1] + " " + str(node.udp_port), encoding="UTF-8"),
+                           (cn.ip, cn.udp_port))
         elif il == "exit":
             print("Goodbye!")
             os._exit(0)
