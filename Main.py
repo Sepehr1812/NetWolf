@@ -12,9 +12,8 @@ class Node:
         self.ip = ip
         self.udp_port = udp_port
         self.cluster = []
-
-    def add_to_cluster(self, c_node):
-        self.cluster.append(c_node)
+        self.cluster_id = []
+        self.mutex = False
 
     def init_cluster(self, file_name):
         with open("../" + file_name, "r") as f:
@@ -22,7 +21,8 @@ class Node:
 
             self.node_id, self.ip, self.udp_port = n[0][0], n[0][1], int(n[0][2])
             for i in range(1, len(n)):
-                self.add_to_cluster(Node(n[i][0], n[i][1], int(n[i][2])))
+                self.cluster.append(Node(n[i][0], n[i][1], int(n[i][2])))
+                self.cluster_id.append(n[i][0])
 
     def merge(self, new_cluster):
         """
@@ -30,11 +30,16 @@ class Node:
         :param new_cluster: serialized cluster string
         :return: None
         """
-        n = [re.split("\\s+", line.rstrip('\n')) for line in new_cluster]
-        for i in n:
-            nc = Node(i[0], i[1], int(i[2]))
-            if not self.cluster.__contains__(nc) and not nc == self:
-                self.cluster.append(nc)
+        self.mutex = True  # to not send cluster while merging list
+
+        lines = new_cluster.splitlines()
+        for line in lines:
+            i = line.split()
+            if not self.cluster_id.__contains__(i[0]) and not self.node_id == i[0]:
+                self.cluster.append(Node(i[0], i[1], int(i[2])))
+                self.cluster_id.append(i[0])
+
+        self.mutex = False
 
 
 def init_node():
@@ -50,49 +55,50 @@ def init_node():
             data = input("Enter node name, IP and UDP port. Enter '0' to finish: ").split()
             if data[0] == '0':
                 break
-            _node.add_to_cluster(Node(data[0], data[1], int(data[2])))
+            _node.cluster.append(Node(data[0], data[1], int(data[2])))
+            _node.cluster_id.append(data[0])
 
     return _node
 
 
 def send_cluster():
     """ to send cluster list to cluster nodes (sending cluster and itself serialized) """
-    # serializing cluster
-    ser = ""
-    for c in node.cluster:
-        ser = ser + c.node_id + " " + c.ip + " " + str(c.udp_port) + "\n"
-    ser = ser + node.node_id + " " + node.ip + " " + str(node.udp_port)
+    if not node.mutex:
+        # serializing cluster
+        ser = ""
+        for c in node.cluster:
+            ser = ser + c.node_id + " " + c.ip + " " + str(c.udp_port) + "\n"
+        ser = ser + node.node_id + " " + node.ip + " " + str(node.udp_port)
 
-    for c in node.cluster:
-        ucs.sendto(bytes(ser, encoding="UTF-8"), (c.ip, c.udp_port))
+        for c in node.cluster:
+            ucs.sendto(bytes(ser, encoding="UTF-8"), (c.ip, c.udp_port))
 
-    threading.Timer(interval, send_cluster).start()
-    print("Cluster Sent")
+        threading.Timer(interval, send_cluster).start()
+        print("Cluster Sent")
 
 
 def udp_server():
     """ to get cluster lists and merge them """
     while True:
-        print("asevgsv")
-        rec_data, addr = uss.recvfrom(1024)
+        print("Getting Cluster")
+        rec_data, addr = uss.recvfrom(4096)
         node.merge(str(rec_data, encoding="UTF-8"))
 
 
 if __name__ == '__main__':
     node = init_node()
 
-    interval = 1.0  # float(input("Enter Discovering interval: "))  # discover interval
+    interval = 5.0  # float(input("Enter Discovering interval: "))  # discover interval
     waiting = 5.0  # float(input("Enter Waiting for Respond time: "))
     service_num = 5  # int(input("Enter Number of Concurrent Services: "))
 
     # UDP server socket
     uss = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     uss.bind((node.ip, node.udp_port))
-    with con.ThreadPoolExecutor(max_workers=5) as executor:
-        executor.map(udp_server, range(5))
+    # with con.ThreadPoolExecutor(max_workers=5) as executor:
+    #     executor.map(udp_server, range(5))
+    threading.Thread(target=udp_server).start()
 
     # UDP client socket
     ucs = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     send_cluster()
-
-    # main loop
