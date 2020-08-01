@@ -2,6 +2,7 @@ import os
 import re
 import socket
 import threading
+from datetime import datetime
 
 
 class Node:
@@ -11,6 +12,7 @@ class Node:
         self.node_id = node_id
         self.ip = ip
         self.udp_port = udp_port
+        self.tcp_port = 0
         self.cluster = []
         self.cluster_id = []
         self.folder = ""
@@ -48,7 +50,7 @@ def init_node():
     node_num = input("Enter init to start. Enter '-l' and text file name to from file: ").split()
     _node = Node()
 
-    if node_num.__len__() > 1:  # to read cluster and IP from file
+    if len(node_num) > 1:  # to read cluster and IP from file
         _node.init_cluster(node_num[2])
     else:
         _node.node_id, _node.ip = input("Enter name & IP: ").split()
@@ -86,15 +88,39 @@ def udp_server():
         # print("Getting Cluster")
         rec_data, addr = uss.recvfrom(4096)
         rec_str = str(rec_data, encoding="UTF-8")
-        if rec_str == "FOUND":  # file exists
-            print("Found")
+        if rec_str.startswith("FOUND"):  # file exists
+            data = rec_str.split()
+            delay = (datetime.now().time().second - int(data[4])) * 1000000 + \
+                    datetime.now().time().microsecond - int(data[5])
+            rna.append(
+                (delay, data[1], data[2], int(data[3])))  # respond tuples: delay, node ID, node IP, node TCP port
         elif rec_str.startswith("GET"):  # request for file file
             data = rec_str.split()
             for root, dirs, files in os.walk(node.folder):
                 if data[1] in files:  # file exists
-                    ucs.sendto(bytes("FOUND", encoding="UTF-8"), (addr[0], int(data[2])))
+                    ucs.sendto(bytes("FOUND " + " " + node.node_id + " " + node.ip + " " + str(node.tcp_port) + " " +
+                                     str(datetime.now().time().second) + " " + str(datetime.now().time().microsecond),
+                                     encoding="UTF-8"), (addr[0], int(data[2])))
         else:  # discovering
             node.merge(rec_str)
+
+
+def sending_file():
+    while True:
+        c, addr = tss.accept()
+        file_name = c.recv(1024)
+        print("file: " + str(file_name, encoding="UTF-8"))
+
+
+def getting_file(file_name):
+    # check if file found
+    if len(rna) <= 0:
+        print("File not found.")
+        return
+
+    best_node = min(rna)
+    tcs.connect((best_node[2], best_node[3]))
+    tcs.send(bytes(file_name, encoding="UTF-8"))
 
 
 if __name__ == '__main__':
@@ -107,28 +133,45 @@ if __name__ == '__main__':
     # UDP server socket
     uss = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     uss.bind((node.ip, node.udp_port))
-    # with con.ThreadPoolExecutor(max_workers=5) as executor:
-    #     executor.map(udp_server, range(5))
     threading.Thread(target=udp_server).start()
 
     # UDP client socket
     ucs = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     send_cluster()
 
+    # TCP server socket
+    tss = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tss.bind(("", 0))
+    tss.listen(1)
+    node.tcp_port = tss.getsockname()[1]
+    print("TCP port number: " + str(node.tcp_port))
+    threading.Thread(target=sending_file).start()
+
+    # TCP client socket
+    tcs = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    # responding node array
+    rna = []
+
     # program loop
     print("help: `list` for cluster list, `get <file_name>` for get a file, `exit` for exit.")
     while True:
         il = input("> ")
         if il == "list":
-            if node.cluster.__len__() <= 0:
+            if len(node.cluster) <= 0:
                 print("There is no cluster list.")
             else:
                 for cn in node.cluster:
                     print(cn.node_id + " " + cn.ip)
         elif il.startswith("get"):
+            fn = il.split()[1]  # file name
+            rna.clear()
             for cn in node.cluster:
-                ucs.sendto(bytes("GET " + il.split()[1] + " " + str(node.udp_port), encoding="UTF-8"),
+                ucs.sendto(bytes("GET " + fn + " " + str(node.udp_port), encoding="UTF-8"),
                            (cn.ip, cn.udp_port))
+
+            # after waiting time
+            threading.Timer(waiting, getting_file, [fn]).start()
         elif il == "exit":
             print("Goodbye!")
             os._exit(0)
