@@ -1,4 +1,5 @@
 import concurrent.futures as con
+import os
 import re
 import socket
 import threading
@@ -74,15 +75,25 @@ def send_cluster():
             ucs.sendto(bytes(ser, encoding="UTF-8"), (c.ip, c.udp_port))
 
         threading.Timer(interval, send_cluster).start()
-        print("Cluster Sent")
+        # print("Cluster Sent")
 
 
 def udp_server():
     """ to get cluster lists and merge them """
     while True:
-        print("Getting Cluster")
+        # print("Getting Cluster")
         rec_data, addr = uss.recvfrom(4096)
+        print(addr)
         node.merge(str(rec_data, encoding="UTF-8"))
+
+
+def search_for_file(file_name):
+    for c in node.cluster:
+        ucs.sendto(bytes(file_name, encoding="UTF-8"), (c.ip, c.udp_port))
+
+    while True:
+        # print("Getting Cluster")
+        rec_data, addr = uss.recvfrom(4096)
 
 
 if __name__ == '__main__':
@@ -102,3 +113,21 @@ if __name__ == '__main__':
     # UDP client socket
     ucs = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     send_cluster()
+
+    # program loop
+    print("help: `list` for cluster list, `get <file_name>` for get a file, `exit` for exit.")
+    while True:
+        il = input("> ")
+        if il == "list":
+            if node.cluster.__len__() <= 0:
+                print("There is no cluster list.")
+            else:
+                for cn in node.cluster:
+                    print(cn.node_id + " " + cn.ip)
+        # elif il.startswith("get"):
+
+        elif il == "exit":
+            print("Goodbye!")
+            os._exit(0)
+        else:
+            print("Enter a valid command.")
