@@ -12,20 +12,18 @@ class Node:
         self.node_id = node_id
         self.ip = ip
         self.udp_port = udp_port
-        self.tcp_port = 0
+        self.tcp_port: int
         self.cluster = []
         self.cluster_id = []
         self.folder = ""
         self.mutex = False
         self.good_nodes = []  # nodes that self has got files from them
+        self.service_num: int  # number of concurrent services
 
     def init_cluster(self, file_name):
         with open("../" + file_name, "r") as f:
             n = [re.split("\\s+", line.rstrip('\n')) for line in f]
-
-            self.node_id, self.ip, self.udp_port = n[0][0], n[0][1], int(n[0][2])
-            self.folder = "../" + n[0][0]
-            for i in range(1, len(n)):
+            for i in range(0, len(n)):
                 self.cluster.append(Node(n[i][0], n[i][1], int(n[i][2])))
                 self.cluster_id.append(n[i][0])
 
@@ -48,21 +46,12 @@ class Node:
 
 
 def init_node():
-    node_num = input("Enter init to start. Enter '-l' and text file name to from file: ").split()
     _node = Node()
 
-    if len(node_num) > 1:  # to read cluster and IP from file
-        _node.init_cluster(node_num[2])
-    else:
-        _node.node_id, _node.ip = input("Enter name & IP: ").split()
-        _node.udp_port = int(input("Enter UDP port: "))
-        _node.folder = input("Enter folder: ")
-        while True:
-            data = input("Enter node name, IP and UDP port. Enter '0' to finish: ").split()
-            if data[0] == '0':
-                break
-            _node.cluster.append(Node(data[0], data[1], int(data[2])))
-            _node.cluster_id.append(data[0])
+    _node.node_id, _node.ip = input("Enter name & IP: ").split()
+    _node.udp_port = int(input("Enter UDP port: "))
+    _node.folder = input("Enter folder: ")
+    _node.init_cluster(input("Enter cluster list text file. It must be in the same level of the project folder: "))
 
     return _node
 
@@ -80,7 +69,6 @@ def send_cluster():
             ucs.sendto(bytes(ser, encoding="UTF-8"), (c.ip, c.udp_port))
 
         threading.Timer(interval, send_cluster).start()
-        # print("Cluster Sent")
 
 
 def udp_server():
@@ -95,16 +83,18 @@ def udp_server():
             rna.append(
                 (delay, data[1], data[2], int(data[3])))  # respond tuples: delay, node ID, node IP, node TCP port
         elif rec_str.startswith("GET"):  # request for file file
-            data = rec_str.split()
-            for root, dirs, files in os.walk(node.folder):
-                if data[1] in files:  # file exists
-                    micro = datetime.now().time().microsecond
-                    if not node.good_nodes.__contains__(data[2]):  # to avoid free riding
-                        micro = micro - 1000  # adding 1 ms to delay time
+            if node.service_num > 0:  # to control traffic distribution
+                data = rec_str.split()
+                for root, dirs, files in os.walk(node.folder):
+                    if data[1] in files:  # file exists
+                        micro = datetime.now().time().microsecond
+                        if not node.good_nodes.__contains__(data[2]):  # to avoid free riding
+                            micro -= 1000  # adding 1 ms to delay time
 
-                    ucs.sendto(bytes("FOUND " + " " + node.node_id + " " + node.ip + " " + str(node.tcp_port) + " " +
-                                     str(datetime.now().time().second) + " " + str(micro), encoding="UTF-8"),
-                               (data[3], int(data[4])))
+                        ucs.sendto(
+                            bytes("FOUND " + " " + node.node_id + " " + node.ip + " " + str(node.tcp_port) + " " +
+                                  str(datetime.now().time().second) + " " + str(micro), encoding="UTF-8"),
+                            (data[3], int(data[4])))
         else:  # discovering
             node.merge(rec_str)
 
@@ -115,6 +105,8 @@ def sending_file():
         file_name = c.recv(1024)
 
         # sending file
+        node.service_num -= 1
+
         file = open(node.folder + "/" + str(file_name, encoding="UTF-8"), "rb")
         data = file.read(4096)
         while data:
@@ -123,6 +115,8 @@ def sending_file():
 
         file.close()
         c.close()
+
+        node.service_num += 1
 
 
 def getting_file(file_name):
@@ -147,19 +141,19 @@ def getting_file(file_name):
         while data:
             file.write(data)
             data = tcs.recv(4096)
-            print("#", end="")
-    print("\nDone!\n> ", end="")
+    print("Done!\n> ", end="")
 
     file.close()
     tcs.close()
 
 
 if __name__ == '__main__':
+    print("*** Welcome to NetWolf! ***\n")
     node = init_node()
 
-    interval = 5.0  # float(input("Enter Discovering interval: "))  # discover interval
-    waiting = 5.0  # float(input("Enter Waiting for Respond time: "))
-    service_num = 5  # int(input("Enter Number of Concurrent Services: "))
+    interval = float(input("Enter Discovering interval time: "))
+    waiting = float(input("Enter Waiting for Respond time: "))
+    node.service_num = int(input("Enter Number of Concurrent Services: "))
 
     # UDP server socket
     uss = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -173,7 +167,7 @@ if __name__ == '__main__':
     # TCP server socket
     tss = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tss.bind(("", 0))
-    tss.listen(1)
+    tss.listen()
     node.tcp_port = tss.getsockname()[1]
     print("TCP port number: " + str(node.tcp_port))
     threading.Thread(target=sending_file).start()
@@ -187,7 +181,7 @@ if __name__ == '__main__':
         il = input("> ")
         if il == "list":
             if len(node.cluster) <= 0:
-                print("There is no cluster list.")
+                print("Cluster list has no node.")
             else:
                 for cn in node.cluster:
                     print(cn.node_id + " " + cn.ip)
@@ -202,6 +196,7 @@ if __name__ == '__main__':
             threading.Timer(waiting, getting_file, [fn]).start()
         elif il == "exit":
             print("Goodbye!")
+            # noinspection PyProtectedMember
             os._exit(0)
         else:
             print("Enter a valid command.")
