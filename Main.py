@@ -17,6 +17,7 @@ class Node:
         self.cluster_id = []
         self.folder = ""
         self.mutex = False
+        self.good_nodes = []  # nodes that self has got files from them
 
     def init_cluster(self, file_name):
         with open("../" + file_name, "r") as f:
@@ -97,9 +98,13 @@ def udp_server():
             data = rec_str.split()
             for root, dirs, files in os.walk(node.folder):
                 if data[1] in files:  # file exists
+                    micro = datetime.now().time().microsecond
+                    if not node.good_nodes.__contains__(data[2]):  # to avoid free riding
+                        micro = micro - 1000  # adding 1 ms to delay time
+
                     ucs.sendto(bytes("FOUND " + " " + node.node_id + " " + node.ip + " " + str(node.tcp_port) + " " +
-                                     str(datetime.now().time().second) + " " + str(datetime.now().time().microsecond),
-                                     encoding="UTF-8"), (addr[0], int(data[2])))
+                                     str(datetime.now().time().second) + " " + str(micro), encoding="UTF-8"),
+                               (data[3], int(data[4])))
         else:  # discovering
             node.merge(rec_str)
 
@@ -135,6 +140,8 @@ def getting_file(file_name):
 
     # receiving data
     print("Getting " + file_name + " from " + best_node[1] + "...")
+    node.good_nodes.append(best_node[1])
+
     with open(node.folder + "/" + file_name, "wb") as file:  # file we want to create
         data = tcs.recv(4096)
         while data:
@@ -188,8 +195,8 @@ if __name__ == '__main__':
             fn = il.split()[1]  # file name
             rna.clear()
             for cn in node.cluster:
-                ucs.sendto(bytes("GET " + fn + " " + str(node.udp_port), encoding="UTF-8"),
-                           (cn.ip, cn.udp_port))
+                ucs.sendto(bytes("GET " + fn + " " + node.node_id + " " + node.ip + " " + str(node.udp_port),
+                                 encoding="UTF-8"), (cn.ip, cn.udp_port))
 
             # after waiting time
             threading.Timer(waiting, getting_file, [fn]).start()
