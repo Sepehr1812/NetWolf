@@ -85,7 +85,6 @@ def send_cluster():
 def udp_server():
     """ to get cluster lists and merge them """
     while True:
-        # print("Getting Cluster")
         rec_data, addr = uss.recvfrom(4096)
         rec_str = str(rec_data, encoding="UTF-8")
         if rec_str.startswith("FOUND"):  # file exists
@@ -109,18 +108,43 @@ def sending_file():
     while True:
         c, addr = tss.accept()
         file_name = c.recv(1024)
-        print("file: " + str(file_name, encoding="UTF-8"))
+
+        # sending file
+        file = open(node.folder + "/" + str(file_name, encoding="UTF-8"), "rb")
+        data = file.read(4096)
+        while data:
+            c.send(data)
+            data = file.read(4096)
+
+        file.close()
+        c.close()
 
 
 def getting_file(file_name):
     # check if file found
     if len(rna) <= 0:
-        print("File not found.")
+        print("File not found.\n> ", end="")
         return
 
     best_node = min(rna)
+
+    # TCP client socket
+    tcs = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tcs.connect((best_node[2], best_node[3]))
     tcs.send(bytes(file_name, encoding="UTF-8"))
+
+    # receiving data
+    print("Getting " + file_name + " from " + best_node[1] + "...")
+    with open(node.folder + "/" + file_name, "wb") as file:  # file we want to create
+        data = tcs.recv(4096)
+        while data:
+            file.write(data)
+            data = tcs.recv(4096)
+            print("#", end="")
+    print("\nDone!\n> ", end="")
+
+    file.close()
+    tcs.close()
 
 
 if __name__ == '__main__':
@@ -146,9 +170,6 @@ if __name__ == '__main__':
     node.tcp_port = tss.getsockname()[1]
     print("TCP port number: " + str(node.tcp_port))
     threading.Thread(target=sending_file).start()
-
-    # TCP client socket
-    tcs = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     # responding node array
     rna = []
